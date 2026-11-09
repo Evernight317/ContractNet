@@ -34,32 +34,56 @@ logger = logging.getLogger(__name__)
 
 
 def _build_orchestrator(max_concurrent: int = 4, db_path: str | None = None) -> Orchestrator:
-    """Build a fully wired orchestrator instance."""
+    """Build a fully wired orchestrator instance.
+
+    Attempts to create an LLM client from environment configuration.
+    If LLM is available, registers ReAct agents; otherwise falls back
+    to stub agents that return placeholder output.
+    """
     state_store = StateStore(db_path=db_path)
+
+    # Try to initialize LLM client from env (.env file or env vars)
+    llm_client = None
+    try:
+        from contractnet.llm.client import LLMClient
+        llm_client = LLMClient()
+        logger.info("LLM client initialized: model=%s", llm_client.config.model)
+    except Exception as e:
+        logger.warning("LLM client init failed (%s) — falling back to stub agents", e)
+
     orchestrator = Orchestrator(
-        planner=Planner(),
+        planner=Planner(llm_client=llm_client),
         auctioneer=Auctioneer(),
-        quality_gate=QualityGate(state_store=state_store),
+        quality_gate=QualityGate(judge_client=llm_client, state_store=state_store),
         conflict_resolver=ConflictResolver(),
         contract_manager=ContractManager(),
         state_store=state_store,
         max_concurrent=max_concurrent,
     )
-    # Register all preset agents
-    from contractnet.core.agent import BaseAgent, CapabilityProfile
-    from contractnet.core.types import Artifact, Contract
 
-    # Simple stub agent that returns a text artifact
-    class StubAgent(BaseAgent):
-        def execute(self, contract: Contract, context: dict | None = None) -> Artifact:
-            return Artifact(
-                task_id=contract.task_id,
-                content=f"Generated output for: {contract.description}",
-                artifact_type="text",
+    if llm_client:
+        from contractnet.core.react_agent import ReActAgent
+        from contractnet.tools.sandbox import ToolSandbox
+
+        sandbox = ToolSandbox()
+        for profile in ALL_PROFILES.values():
+            orchestrator.register_agent(
+                ReActAgent(profile, llm_client=llm_client, sandbox=sandbox)
             )
+    else:
+        from contractnet.core.agent import BaseAgent
+        from contractnet.core.types import Artifact, Contract
 
-    for profile in ALL_PROFILES.values():
-        orchestrator.register_agent(StubAgent(profile))
+        class StubAgent(BaseAgent):
+            def execute(self, contract: Contract, context: dict | None = None) -> Artifact:
+                return Artifact(
+                    task_id=contract.task_id,
+                    content=f"Generated output for: {contract.description}",
+                    artifact_type="text",
+                )
+
+        for profile in ALL_PROFILES.values():
+            orchestrator.register_agent(StubAgent(profile))
 
     return orchestrator
 

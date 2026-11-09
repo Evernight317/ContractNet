@@ -127,7 +127,6 @@ CODER_PROFILE = CapabilityProfile(
     name="Coder Agent",
     task_types=["code", "design"],
     tools=["file_read", "file_write", "code_run", "list_dir"],
-    model="gpt-4o",
     self_assessed_skills={"python": 0.9, "javascript": 0.7, "sql": 0.6, "architecture": 0.8},
 )
 
@@ -136,7 +135,6 @@ TESTER_PROFILE = CapabilityProfile(
     name="Tester Agent",
     task_types=["test"],
     tools=["file_read", "code_run", "test_run", "list_dir"],
-    model="gpt-4o",
     self_assessed_skills={"python": 0.85, "pytest": 0.9, "testing": 0.9},
 )
 
@@ -145,7 +143,6 @@ DOC_PROFILE = CapabilityProfile(
     name="Doc Agent",
     task_types=["doc"],
     tools=["file_read", "file_write", "list_dir"],
-    model="gpt-4o-mini",
     self_assessed_skills={"markdown": 0.9, "documentation": 0.9, "api_docs": 0.85},
 )
 
@@ -154,7 +151,6 @@ ANALYST_PROFILE = CapabilityProfile(
     name="Analyst Agent",
     task_types=["analysis"],
     tools=["data_read", "code_run", "file_read", "file_write"],
-    model="gpt-4o",
     self_assessed_skills={"data_analysis": 0.9, "statistics": 0.8, "visualization": 0.75},
 )
 
@@ -163,7 +159,6 @@ REVIEWER_PROFILE = CapabilityProfile(
     name="Reviewer Agent",
     task_types=["review"],
     tools=["file_read", "list_dir"],
-    model="gpt-4o",
     self_assessed_skills={"code_review": 0.9, "architecture": 0.8, "security": 0.7},
 )
 
@@ -172,7 +167,6 @@ GENERAL_PROFILE = CapabilityProfile(
     name="General Agent",
     task_types=["*"],
     tools=["file_read", "file_write", "code_run", "list_dir"],
-    model="gpt-4o-mini",
     self_assessed_skills={"general": 0.7},
 )
 

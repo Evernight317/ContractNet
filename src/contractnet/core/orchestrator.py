@@ -230,13 +230,16 @@ class Orchestrator:
 
     def _execute_task(self, task: Task, contract: Contract, agent: BaseAgent) -> Artifact:
         """Execute a single task via the assigned agent."""
-        dag_status = TaskStatus.RUNNING
         try:
             lock = self._agent_locks.get(agent.agent_id)
             if lock and lock.acquire(blocking=False):
                 try:
                     agent._busy = True
                     artifact = agent.execute(contract)
+                    # Accumulate token usage from agent execution log
+                    if hasattr(agent, "_execution_log") and agent._execution_log:
+                        last = agent._execution_log[-1]
+                        self._total_tokens += last.tokens_used
                     return artifact
                 finally:
                     agent._busy = False

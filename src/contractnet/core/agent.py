@@ -39,7 +39,7 @@ class CapabilityProfile(BaseModel):
     name: str
     task_types: list[str] = Field(default_factory=list)
     tools: list[str] = Field(default_factory=list)
-    model: str = "gpt-4o-mini"
+    model: str | None = None
     self_assessed_skills: dict[str, float] = Field(default_factory=dict)
     historical_performance: dict[str, AgentPerformance] = Field(default_factory=dict)
 

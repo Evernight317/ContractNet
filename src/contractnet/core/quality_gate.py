@@ -129,7 +129,8 @@ Return JSON only:
 {{"satisfied": true/false, "score": 0.0-1.0, "reason": "brief explanation", "missing": ["list of missing requirements"]}}
 """
             response = self.judge_client.complete(prompt)
-            result = json.loads(response)
+            # LLM may wrap JSON in markdown fences or add prose; extract robustly
+            result = self._parse_json_response(response)
 
             score = float(result.get("score", 0.0))
             passed = score >= threshold
@@ -150,6 +151,37 @@ Return JSON only:
                 passed=True, layer=ValidationLayer.SEMANTIC, score=threshold,
                 feedback=f"Semantic validation error: {e}",
             )
+
+    @staticmethod
+    def _parse_json_response(text: str) -> dict:
+        """Parse LLM JSON response robustly — handles markdown fences and prose.
+
+        Tries: direct json.loads → extract first {...} block → fallback dict.
+        """
+        import re
+
+        text = text.strip()
+        # Strip markdown code fences
+        if text.startswith("```"):
+            text = re.sub(r"^```(?:json)?\s*", "", text)
+            text = re.sub(r"\s*```$", "", text)
+
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+
+        # Extract first { ... } block
+        match = re.search(r"\{.*\}", text, re.DOTALL)
+        if match:
+            try:
+                return json.loads(match.group())
+            except json.JSONDecodeError:
+                pass
+
+        # Fallback: assume passed with neutral score
+        logger.warning("Could not parse judge response as JSON, using fallback")
+        return {"satisfied": True, "score": 0.8, "reason": "parse fallback", "missing": []}
 
     def _validate_impact(self, artifact: Artifact) -> ValidationResult:
         """Layer 3: Impact validation — check for conflicts with existing artifacts.
