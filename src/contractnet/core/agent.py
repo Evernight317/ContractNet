@@ -95,7 +95,7 @@ class BaseAgent(ABC):
 
     def __init__(self, profile: CapabilityProfile) -> None:
         self.profile = profile
-        self._execution_log: list[ExecutionRecord] = []
+        self.memory = None  # lazily initialized to avoid circular import
         self._busy = False
 
     @property
@@ -162,11 +162,15 @@ class BaseAgent(ABC):
 
     def record_execution(self, record: ExecutionRecord) -> None:
         """Record execution result and update performance metrics."""
-        self._execution_log.append(record)
-        self._update_performance(record)
+        if self.memory is None:
+            from contractnet.memory.agent_memory import AgentMemory
+            self.memory = AgentMemory(self.profile)
+        self.memory.record_execution(record)
 
     def get_execution_log(self) -> list[ExecutionRecord]:
-        return list(self._execution_log)
+        if self.memory is None:
+            return []
+        return self.memory.get_execution_log()
 
     # ──────────────────────────────────────────
     # Private helpers
@@ -203,7 +207,9 @@ class BaseAgent(ABC):
         static = self._compute_capability(contract)
 
         # Dynamic: historical performance for similar task types
-        perf = self.profile.historical_performance.get(contract.task_id[:4])
+        # Infer task type from contract description
+        task_type = self._infer_task_type_from_contract(contract)
+        perf = self.profile.historical_performance.get(task_type)
         if perf and perf.total_tasks > 0:
             dynamic = 0.5 * perf.success_rate + 0.5 * perf.avg_quality
         else:
@@ -214,7 +220,8 @@ class BaseAgent(ABC):
     def _estimate_cost(self, contract: Contract) -> int:
         """Estimate token cost for executing this contract."""
         base_cost = contract.constraints.max_tokens
-        perf = self.profile.historical_performance.get(contract.task_id[:4])
+        task_type = self._infer_task_type_from_contract(contract)
+        perf = self.profile.historical_performance.get(task_type)
         if perf and perf.avg_cost > 0:
             return int(0.5 * base_cost + 0.5 * perf.avg_cost)
         return base_cost
@@ -232,3 +239,12 @@ class BaseAgent(ABC):
             perf.avg_quality = (n * perf.avg_quality + record.quality_score) / (n + 1)
         perf.last_updated = time.time()
         self.profile.historical_performance[key] = perf
+
+    @staticmethod
+    def _infer_task_type_from_contract(contract: Contract) -> str:
+        """Infer task type from contract description for performance lookup."""
+        desc = contract.description.lower()
+        for ttype in ("code", "test", "doc", "analysis", "design", "review"):
+            if ttype in desc:
+                return ttype
+        return "general"

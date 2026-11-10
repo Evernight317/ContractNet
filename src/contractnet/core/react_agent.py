@@ -151,6 +151,10 @@ class ReActAgent(BaseAgent):
         """Build the initial message list for the LLM conversation."""
         context = context or {}
 
+        # Retrieve memory reference (success templates / failure patterns)
+        task_type = self._infer_task_type(contract)
+        memory_ref = self.memory.get_reference(task_type, contract.description)
+
         tool_names = ", ".join(self.profile.tools)
         system = (
             f"You are {self.profile.name}, a specialized agent in a multi-agent system.\n"
@@ -161,6 +165,8 @@ class ReActAgent(BaseAgent):
             f"- When you have completed the task, provide your final result as a clear text response.\n"
             f"- Be concise and focused. Do not repeat steps unnecessarily.\n"
         )
+        if memory_ref:
+            system += f"\nPast experience:\n{memory_ref}\n"
 
         user_content = (
             f"Task: {contract.description}\n\n"

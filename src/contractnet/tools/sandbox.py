@@ -94,6 +94,9 @@ class ToolSandbox:
             # Path check for file operations
             if "path" in params or "file_path" in params:
                 target = Path(params.get("path") or params.get("file_path", ""))
+                # Prevent path traversal (../../etc/passwd)
+                if ".." in str(target):
+                    return ToolResult(success=False, error="Path traversal not allowed")
                 if not self._is_path_allowed(target, permission):
                     return ToolResult(success=False, error=f"Path not allowed: {target}")
 

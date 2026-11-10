@@ -151,7 +151,7 @@ Constraints:
         dag.add_task(task)
 
     def get_dag(self) -> TaskDAG:
-        """Return the current DAG (placeholder for stateful planner)."""
+        """Return the current DAG (empty if no plan has been made yet)."""
         return TaskDAG()
 
     # ──────────────────────────────────────────

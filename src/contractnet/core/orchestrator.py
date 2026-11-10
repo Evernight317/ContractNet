@@ -91,6 +91,8 @@ class Orchestrator:
         self._max_concurrent = max_concurrent
         self._executor = ThreadPoolExecutor(max_workers=max_concurrent)
         self._total_tokens = 0
+        self._current_dag: TaskDAG | None = None
+        self._cancelled_tasks: set[str] = set()
 
     def register_agent(self, agent: BaseAgent) -> None:
         """Register an agent for the auction pool."""
@@ -116,6 +118,7 @@ class Orchestrator:
 
         # Phase 1: Decompose
         dag = self.planner.plan(goal, context)
+        self._current_dag = dag
         logger.info("Goal decomposed into %d tasks", len(dag.tasks))
 
         # Main loop
@@ -135,6 +138,9 @@ class Orchestrator:
             # Phase 2-3: Auction & Execute ready tasks
             futures: dict[str, Future] = {}
             for task in ready_tasks:
+                if task.task_id in self._cancelled_tasks:
+                    dag.update_status(task.task_id, TaskStatus.FAILED)
+                    continue
                 contract = self.contract_manager.create_contract(task)
                 self.contract_manager.open_bidding(contract)
 
@@ -208,21 +214,40 @@ class Orchestrator:
 
     def get_status(self) -> SystemStatus:
         """Get current system status snapshot."""
+        dag = self._current_dag
+        total = len(dag.tasks) if dag else 0
+        done = sum(1 for t in dag.tasks.values() if t.status == TaskStatus.DONE) if dag else 0
+        failed = sum(1 for t in dag.tasks.values() if t.status in (TaskStatus.FAILED, TaskStatus.IMPOSSIBLE)) if dag else 0
         return SystemStatus(
-            total_tasks=0,
-            done_tasks=0,
-            failed_tasks=0,
+            total_tasks=total,
+            done_tasks=done,
+            failed_tasks=failed,
             active_contracts=len(self.contract_manager.get_active_contracts()),
             running_agents=[aid for aid, a in self._agents.items() if a.is_busy],
         )
 
     def cancel_task(self, task_id: str) -> None:
-        """Cancel a running task."""
-        logger.info("Cancellation requested for task %s", task_id)
+        """Cancel a task — marks it as FAILED so the main loop skips it."""
+        self._cancelled_tasks.add(task_id)
+        if self._current_dag:
+            self._current_dag.update_status(task_id, TaskStatus.FAILED)
+        logger.info("Task %s cancelled", task_id)
 
     def inject_human_feedback(self, task_id: str, feedback: str) -> None:
-        """Inject human feedback for a task (for human-in-the-loop)."""
-        logger.info("Human feedback for task %s: %s", task_id, feedback)
+        """Inject human feedback for a task (for human-in-the-loop).
+
+        Attaches feedback to the task metadata so downstream agents can
+        reference it on retry or re-plan.
+        """
+        if self._current_dag:
+            task = self._current_dag.get_task(task_id)
+            if task:
+                task.metadata["human_feedback"] = feedback
+                logger.info("Human feedback recorded for task %s", task_id)
+            else:
+                logger.warning("Task %s not found in current DAG", task_id)
+        else:
+            logger.warning("No active DAG — cannot inject feedback")
 
     # ──────────────────────────────────────────
     # Private methods
