@@ -31,20 +31,33 @@ class StateStore:
         - Store contracts and bids
         - Support snapshot/restore for replay
 
+    Redis is optional: if no redis_client is passed and auto-connect
+    fails (no Redis server running), the store silently degrades to
+    SQLite-only mode with an in-memory dict for hot data.
+
     Not responsible for:
         - Agent-local memory (AgentMemory handles this)
         - Quality validation
         - Conflict detection
     """
 
-    def __init__(self, db_path: str | Path | None = None, redis_client=None) -> None:
+    def __init__(
+        self,
+        db_path: str | Path | None = None,
+        redis_client=None,
+        auto_connect_redis: bool = True,
+    ) -> None:
         """
         Args:
             db_path: Path for SQLite cold storage. None = in-memory.
             redis_client: Optional Redis client for hot layer.
-                         If None, hot layer falls back to in-memory dict.
+                         If None and auto_connect_redis is True, attempts
+                         to connect to localhost:6379; on failure falls
+                         back to in-memory dict (SQLite-only mode).
         """
         self.redis = redis_client
+        if self.redis is None and auto_connect_redis:
+            self.redis = self._try_connect_redis()
         self._hot: dict[str, str] = {}  # fallback if no Redis
         self._db_path = db_path
         self._conn = sqlite3.connect(
@@ -52,6 +65,22 @@ class StateStore:
             check_same_thread=False,
         )
         self._init_db()
+
+    @staticmethod
+    def _try_connect_redis():
+        """Attempt to connect to a local Redis server; return client or None."""
+        try:
+            import redis
+            client = redis.Redis(host="localhost", port=6379, decode_responses=True)
+            client.ping()
+            logger.info("Redis connected at localhost:6379 — hot layer active")
+            return client
+        except ImportError:
+            logger.debug("redis package not installed — using SQLite-only mode")
+            return None
+        except Exception:
+            logger.info("Redis not available — using SQLite-only mode")
+            return None
 
     def _init_db(self) -> None:
         """Initialize SQLite schema."""

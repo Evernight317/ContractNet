@@ -145,7 +145,11 @@ class EvalRunner:
         return results
 
     def _build_orchestrator(self, config: EvalConfig) -> Orchestrator:
-        """Build an orchestrator from eval config."""
+        """Build an orchestrator from eval config.
+
+        Reuses the same LLM-aware wiring as the CLI: if CONTRACTNET_API_KEY
+        is set, registers ReActAgents; otherwise falls back to StubAgents.
+        """
         from contractnet.core.planner import Planner
         from contractnet.core.auctioneer import Auctioneer
         from contractnet.core.quality_gate import QualityGate
@@ -157,26 +161,43 @@ class EvalRunner:
         from contractnet.tools.builtins import ALL_PROFILES
 
         state_store = StateStore()
+
+        llm_client = None
+        try:
+            from contractnet.llm.client import LLMClient
+            llm_client = LLMClient()
+        except Exception:
+            pass
+
         orchestrator = Orchestrator(
-            planner=Planner(),
+            planner=Planner(llm_client=llm_client),
             auctioneer=Auctioneer(),
-            quality_gate=QualityGate(state_store=state_store),
+            quality_gate=QualityGate(judge_client=llm_client, state_store=state_store),
             conflict_resolver=ConflictResolver(),
             contract_manager=ContractManager(),
             state_store=state_store,
             max_concurrent=config.max_concurrent,
         )
 
-        class StubAgent(BaseAgent):
-            def execute(self, contract: Contract, context=None) -> Artifact:
-                return Artifact(
-                    task_id=contract.task_id,
-                    content=f"Output for: {contract.description}",
-                    artifact_type="text",
+        if llm_client:
+            from contractnet.core.react_agent import ReActAgent
+            from contractnet.tools.sandbox import ToolSandbox
+            sandbox = ToolSandbox()
+            for profile in ALL_PROFILES.values():
+                orchestrator.register_agent(
+                    ReActAgent(profile, llm_client=llm_client, sandbox=sandbox)
                 )
+        else:
+            class StubAgent(BaseAgent):
+                def execute(self, contract: Contract, context=None) -> Artifact:
+                    return Artifact(
+                        task_id=contract.task_id,
+                        content=f"Output for: {contract.description}",
+                        artifact_type="text",
+                    )
 
-        for profile in ALL_PROFILES.values():
-            orchestrator.register_agent(StubAgent(profile))
+            for profile in ALL_PROFILES.values():
+                orchestrator.register_agent(StubAgent(profile))
 
         return orchestrator
 

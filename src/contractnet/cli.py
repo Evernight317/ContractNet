@@ -29,6 +29,7 @@ from contractnet.memory.state_store import StateStore
 from contractnet.observability.tracer import Tracer, MetricsCollector
 from contractnet.observability.dashboard import render_dag_graph, render_trace_tree, render_metrics_table
 from contractnet.tools.builtins import ALL_PROFILES
+from contractnet.memory.state_store import StateStore as _StateStore
 
 logger = logging.getLogger(__name__)
 
@@ -196,15 +197,110 @@ def conflicts(task_id: str | None) -> None:
 @cli.command()
 @click.argument("goal_id")
 def replay(goal_id: str) -> None:
-    """Replay a completed goal execution."""
-    click.echo(f"Replay not yet implemented for goal: {goal_id}")
+    """Replay a completed goal execution from persisted state."""
+    state_store = _StateStore()
+    dag = state_store.get_dag()
+    if not dag:
+        click.echo("No DAG found. Run a goal first.")
+        return
+
+    click.echo(f"\n{'='*60}")
+    click.echo(f"Replay: {dag.goal_description}")
+    click.echo(f"Goal ID: {dag.goal_id}")
+    click.echo(f"{'='*60}\n")
+
+    tasks = sorted(dag.tasks.values(), key=lambda t: t.created_at)
+    for i, task in enumerate(tasks):
+        indent = "  " * task.depth
+        status_icon = {"done": "✓", "failed": "✗", "impossible": "⊘", "replanned": "↻"}.get(
+            task.status.value, "·"
+        )
+        click.echo(f"  [{status_icon}] {i+1}. {indent}{task.description[:70]}")
+        click.echo(f"       type={task.task_type}  status={task.status.value}  retries={task.retry_count}")
+        if task.depends_on:
+            click.echo(f"       depends_on: {', '.join(task.depends_on[:3])}")
+
+    artifacts = state_store.get_all_artifacts()
+    if artifacts:
+        click.echo(f"\n{'─'*60}")
+        click.echo(f"Artifacts ({len(artifacts)}):")
+        for art in artifacts:
+            quality = f"quality={art.quality_score:.2f}" if art.quality_score else "no-score"
+            click.echo(f"  {art.artifact_id} | type={art.artifact_type} | v{art.version} | {quality}")
+            click.echo(f"    preview: {art.content[:120]}")
+
+    click.echo(f"\n{'='*60}")
+    click.echo(f"Total tasks: {len(tasks)}")
+    click.echo(f"Done: {sum(1 for t in tasks if t.status.value == 'done')}")
+    click.echo(f"{'='*60}")
 
 
 @cli.command()
 @click.argument("goal_id")
 def eval(goal_id: str) -> None:
-    """Export evaluation report."""
-    click.echo(f"Evaluation report for {goal_id}: Not yet implemented")
+    """Export evaluation report for a completed goal."""
+    state_store = _StateStore()
+    dag = state_store.get_dag()
+    if not dag:
+        click.echo("No DAG found. Run a goal first.")
+        return
+
+    artifacts = state_store.get_all_artifacts()
+    tasks = list(dag.tasks.values())
+    total = len(tasks)
+    done = sum(1 for t in tasks if t.status.value == "done")
+    failed = sum(1 for t in tasks if t.status.value == "failed")
+    retried = sum(1 for t in tasks if t.retry_count > 0)
+
+    report = {
+        "goal": dag.goal_description,
+        "goal_id": dag.goal_id,
+        "summary": {
+            "total_tasks": total,
+            "done_tasks": done,
+            "failed_tasks": failed,
+            "retried_tasks": retried,
+            "completion_rate": round(done / total, 4) if total else 0,
+            "artifacts_produced": len(artifacts),
+        },
+        "artifacts": [
+            {
+                "id": a.artifact_id,
+                "type": a.artifact_type,
+                "quality_score": a.quality_score,
+                "version": a.version,
+            }
+            for a in artifacts
+        ],
+        "tasks": [
+            {
+                "id": t.task_id,
+                "description": t.description[:100],
+                "type": t.task_type,
+                "status": t.status.value,
+                "retries": t.retry_count,
+                "depth": t.depth,
+            }
+            for t in sorted(tasks, key=lambda t: t.created_at)
+        ],
+    }
+
+    import json as _json
+    output = _json.dumps(report, indent=2, ensure_ascii=False)
+
+    report_path = f"eval_report_{dag.goal_id}.json"
+    with open(report_path, "w", encoding="utf-8") as f:
+        f.write(output)
+
+    click.echo(f"Evaluation report saved to: {report_path}")
+    click.echo(f"\nSummary:")
+    click.echo(f"  Tasks: {done}/{total} done ({failed} failed, {retried} retried)")
+    click.echo(f"  Artifacts: {len(artifacts)}")
+    if artifacts:
+        avg_q = sum(a.quality_score for a in artifacts if a.quality_score) / len(artifacts)
+        click.echo(f"  Avg quality: {avg_q:.2f}")
+    else:
+        click.echo("  Avg quality: N/A")
 
 
 @cli.command()
